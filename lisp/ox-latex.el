@@ -1369,7 +1369,11 @@ holding contextual information."
   (unless (org-element-property :footnote-section-p headline)
     (let* ((class (plist-get info :latex-class))
 	   (level (org-export-get-relative-level headline info))
-	   (numberedp (org-export-numbered-headline-p headline info))
+	   (latex-numbered (org-export-get-node-property :LATEX_NUMBERED headline))
+	   (numberedp
+	    (cond ((equal latex-numbered "n") nil)
+		  ((equal latex-numbered "y") t)
+		  (t (org-export-numbered-headline-p headline info))))
 	   (class-sectionning (assoc class org-latex-classes))
 	   ;; Section formatting will set two placeholders: one for
 	   ;; the title and the other for the contents.
