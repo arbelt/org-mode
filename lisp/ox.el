@@ -1710,7 +1710,7 @@ Assume buffer is in Org mode.  Narrowing, if any, is ignored."
   ;; Store full path of input file name, or nil.  For internal use.
   (list :input-file (buffer-file-name (buffer-base-buffer))))
 
-(defvar org-export--default-title)	; Dynamically scoped.
+(defvar org-export--default-title nil)	; Dynamically scoped.
 (defun org-export-store-default-title ()
   "Return default title for current document, as a string.
 Title is extracted from associated file name, if any, or buffer's
@@ -4481,26 +4481,26 @@ same column as TABLE-CELL, or nil."
 				     (plist-put info :table-cell-width-cache
 						(make-hash-table :test 'equal)))
 			       :table-cell-width-cache)))
-	 (key (cons table column)))
-    (or (let ((cached (gethash key cache 'no-result)))
-	  (and (not (eq cached 'no-result)) cached))
-	(let (cookie-width)
-	  (dolist (row (org-element-contents table)
-		       (puthash key cookie-width cache))
-	    (when (org-export-table-row-is-special-p row info)
-	      ;; In a special row, try to find a width cookie at COLUMN.
-	      (let* ((value (org-element-contents
-			     (elt (org-element-contents row) column)))
-		     (cookie (car value)))
-		;; The following checks avoid expanding unnecessarily the
-		;; cell with `org-export-data'
-		(when (and value
-			   (not (cdr value))
-			   (stringp cookie)
-			   (string-match "\\`<[lrc]?\\([0-9]+\\)?>\\'" cookie)
-			   (match-string 1 cookie))
-		  (setq cookie-width
-			(string-to-number (match-string 1 cookie)))))))))))
+	 (key (cons table column))
+	 (value (gethash key cache 'no-result)))
+    (if (not (eq value 'no-result)) value
+      (let (cookie-width)
+	(dolist (row (org-element-contents table)
+		     (puthash key cookie-width cache))
+	  (when (org-export-table-row-is-special-p row info)
+	    ;; In a special row, try to find a width cookie at COLUMN.
+	    (let* ((value (org-element-contents
+			   (elt (org-element-contents row) column)))
+		   (cookie (car value)))
+	      ;; The following checks avoid expanding unnecessarily
+	      ;; the cell with `org-export-data'.
+	      (when (and value
+			 (not (cdr value))
+			 (stringp cookie)
+			 (string-match "\\`<[lrc]?\\([0-9]+\\)?>\\'" cookie)
+			 (match-string 1 cookie))
+		(setq cookie-width
+		      (string-to-number (match-string 1 cookie)))))))))))
 
 (defun org-export-table-cell-alignment (table-cell info)
   "Return TABLE-CELL contents alignment.
