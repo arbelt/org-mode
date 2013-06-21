@@ -251,14 +251,14 @@ references; a process which could likely result in the execution
 of other code blocks.
 
 Returns a list
- (language body header-arguments-alist switches name indent)."
+ (language body header-arguments-alist switches name indent block-head)."
   (let ((case-fold-search t) head info name indent)
     ;; full code block
     (if (setq head (org-babel-where-is-src-block-head))
 	(save-excursion
 	  (goto-char head)
 	  (setq info (org-babel-parse-src-block-match))
-	  (setq indent (car (last info)))
+	  (setq indent (nth 5 info))
 	  (setq info (butlast info))
 	  (while (and (forward-line -1)
 		      (looking-at org-babel-multi-line-header-regexp))
@@ -274,7 +274,7 @@ Returns a list
     ;; resolve variable references and add summary parameters
     (when (and info (not light))
       (setf (nth 2 info) (org-babel-process-params (nth 2 info))))
-    (when info (append info (list name indent)))))
+    (when info (append info (list name indent head)))))
 
 (defvar org-current-export-file) ; dynamically bound
 (defmacro org-babel-check-confirm-evaluate (info &rest body)
@@ -464,6 +464,7 @@ then run `org-babel-switch-to-session'."
     (session	. :any)
     (shebang	. :any)
     (tangle	. ((tangle yes no :any)))
+    (tangle-mode . ((#o755 #o555 #o444 :any)))
     (var	. :any)
     (wrap       . :any)))
 
@@ -535,6 +536,12 @@ can not be resolved.")
 
 ;;; functions
 (defvar call-process-region)
+(defvar org-babel-current-src-block-location nil
+  "Marker pointing to the src block currently being executed.
+This may also point to a call line or an inline code block.  If
+multiple blocks are being executed (e.g., in chained execution
+through use of the :var header argument) this marker points to
+the outer-most code block.")
 
 ;;;###autoload
 (defun org-babel-execute-src-block (&optional arg info params)
@@ -562,6 +569,8 @@ block."
       (let* ((params (if params
 			 (org-babel-process-params merged-params)
 		       (nth 2 info)))
+	     (org-babel-current-src-block-location
+	      (or org-babel-current-src-block-location (nth 6 info)))
 	     (cachep (and (not arg) (cdr (assoc :cache params))
 			   (string= "yes" (cdr (assoc :cache params)))))
 	     (new-hash (when cachep (org-babel-sha1-hash info)))
@@ -592,7 +601,7 @@ block."
 		  (or (org-bound-and-true-p
 		       org-babel-call-process-region-original)
 		      (symbol-function 'call-process-region)))
-		 (indent (car (last info)))
+		 (indent (nth 5 info))
 		 result cmd)
 	    (unwind-protect
 		(let ((call-process-region
@@ -757,7 +766,7 @@ arguments and pop open the results in a preview buffer."
 	 (lang-headers (intern (concat "org-babel-header-args:" lang)))
 	 (headers (org-babel-combine-header-arg-lists
 		   org-babel-common-header-args-w-values
-		   (if (boundp lang-headers) (eval lang-headers) nil)))
+		   (when (boundp lang-headers) (eval lang-headers))))
 	 (arg (org-icompleting-read
 	       "Header Arg: "
 	       (mapcar
@@ -1282,26 +1291,38 @@ portions of results lines."
 (defvar org-file-properties)
 (defun org-babel-params-from-properties (&optional lang)
   "Retrieve parameters specified as properties.
-Return an association list of any source block params which
-may be specified in the properties of the current outline entry."
+Return a list of association lists of source block params
+specified in the properties of the current outline entry."
   (save-match-data
-    (let (val sym)
-      (org-babel-parse-multiple-vars
-       (delq nil
-	     (mapcar
-	      (lambda (header-arg)
-		(and (setq val (org-entry-get (point) header-arg t))
-		     (cons (intern (concat ":" header-arg))
-			   (org-babel-read val))))
+    (list
+     ;; header arguments specified as separate property
+     (let (val sym)
+       (org-babel-parse-multiple-vars
+	(delq nil
 	      (mapcar
-	       #'symbol-name
+	       (lambda (header-arg)
+		 (and (setq val (org-entry-get (point) header-arg t))
+		      (cons (intern (concat ":" header-arg))
+			    (org-babel-read val))))
 	       (mapcar
-		#'car
-		(org-babel-combine-header-arg-lists
-		 org-babel-common-header-args-w-values
-		 (progn
-		   (setq sym (intern (concat "org-babel-header-args:" lang)))
-		   (and (boundp sym) (eval sym))))))))))))
+		#'symbol-name
+		(mapcar
+		 #'car
+		 (org-babel-combine-header-arg-lists
+		  org-babel-common-header-args-w-values
+		  (progn
+		    (setq sym (intern (concat "org-babel-header-args:" lang)))
+		    (and (boundp sym) (eval sym))))))))))
+     ;; header arguments specified with the header-args property
+     (save-match-data
+       (org-babel-parse-header-arguments
+	(org-entry-get (point) "header-args"
+		       'inherit)))
+     ;; language-specific header arguments
+     (save-match-data
+       (org-babel-parse-header-arguments
+	(org-entry-get (point) (concat "header-args:" lang)
+		       'inherit))))))
 
 (defvar org-src-preserve-indentation)
 (defun org-babel-parse-src-block-match ()
@@ -1327,12 +1348,13 @@ may be specified in the properties of the current outline entry."
               (insert (org-unescape-code-in-string body))
 	      (unless preserve-indentation (org-do-remove-indentation))
               (buffer-string)))
-	  (org-babel-merge-params
-	   org-babel-default-header-args
-	   (if (boundp lang-headers) (eval lang-headers) nil)
-           (org-babel-params-from-properties lang)
-	   (org-babel-parse-header-arguments
-            (org-no-properties (or (match-string 4) ""))))
+	  (apply #'org-babel-merge-params
+		 org-babel-default-header-args
+		 (when (boundp lang-headers) (eval lang-headers))
+		 (append
+		  (org-babel-params-from-properties lang)
+		  (list (org-babel-parse-header-arguments
+			 (org-no-properties (or (match-string 4) ""))))))
 	  switches
 	  block-indentation)))
 
@@ -1342,12 +1364,13 @@ may be specified in the properties of the current outline entry."
          (lang-headers (intern (concat "org-babel-default-header-args:" lang))))
     (list lang
           (org-unescape-code-in-string (org-no-properties (match-string 5)))
-          (org-babel-merge-params
-           org-babel-default-inline-header-args
-           (if (boundp lang-headers) (eval lang-headers) nil)
-           (org-babel-params-from-properties lang)
-           (org-babel-parse-header-arguments
-            (org-no-properties (or (match-string 4) "")))))))
+          (apply #'org-babel-merge-params
+		 org-babel-default-inline-header-args
+		 (if (boundp lang-headers) (eval lang-headers) nil)
+		 (append
+		  (org-babel-params-from-properties lang)
+		  (list (org-babel-parse-header-arguments
+			 (org-no-properties (or (match-string 4) "")))))))))
 
 (defun org-babel-balanced-split (string alts)
   "Split STRING on instances of ALTS.
@@ -1592,7 +1615,7 @@ If the point is not on a source block then return nil."
         (< top initial) (< initial bottom)
         (progn (goto-char top) (beginning-of-line 1)
 	       (looking-at org-babel-src-block-regexp))
-        (point))))))
+        (point-marker))))))
 
 ;;;###autoload
 (defun org-babel-goto-src-block-head ()
@@ -2523,10 +2546,10 @@ block but are passed literally to the \"example-block\"."
 (defun org-babel-read (cell &optional inhibit-lisp-eval)
   "Convert the string value of CELL to a number if appropriate.
 Otherwise if cell looks like lisp (meaning it starts with a
-\"(\", \"'\", \"`\" or a \"[\") then read it as lisp, otherwise
-return it unmodified as a string.  Optional argument NO-LISP-EVAL
-inhibits lisp evaluation for situations in which is it not
-appropriate."
+\"(\", \"'\", \"`\" or a \"[\") then read it as lisp,
+otherwise return it unmodified as a string.  Optional argument
+NO-LISP-EVAL inhibits lisp evaluation for situations in which is
+it not appropriate."
   (if (and (stringp cell) (not (equal cell "")))
       (or (org-babel-number-p cell)
           (if (and (not inhibit-lisp-eval)

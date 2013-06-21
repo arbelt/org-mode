@@ -3814,7 +3814,7 @@ header, or they will be appended."
     (""     "longtable" nil)
     (""     "float"     nil)
     (""     "wrapfig"   nil)
-    (""     "soul"      t)
+    ("normalem" "ulem"  t)
     (""     "textcomp"  t)
     (""     "marvosym"  t)
     (""     "wasysym"   t)
@@ -3837,6 +3837,7 @@ Org mode to function properly:
   symbols used for interpreting the entities in `org-entities'.
   You can skip some of these packages if you don't use any of the
   symbols in it.
+- ulem: for underline and strike-through
 - graphicx: for including images
 - float, wrapfig: for figure placement
 - longtable: for long tables
@@ -4311,12 +4312,6 @@ If TABLE-TYPE is non-nil, also check for table.el-type tables."
 	      (forward-char 1)))
 	(re-search-forward org-table-any-border-regexp nil 1))))
   (unless quietly (message "Mapping tables: done")))
-
-;; Declare and autoload functions from ox.el and al.
-
-(declare-function org-export-get-environment "ox"
-		  (&optional backend subtreep ext-plist))
-(declare-function org-latex-guess-inputenc "ox-latex" (header))
 
 ;; Declare and autoload functions from org-agenda.el
 
@@ -6127,8 +6122,15 @@ Use `org-reduced-level' to remove the effect of `org-odd-levels'."
 
 (defvar org-font-lock-keywords nil)
 
-(defconst org-property-re (org-re "^[ \t]*\\(:\\([-[:alnum:]_]+\\+?\\):\\)[ \t]*\\([^ \t\r\n].*\\)")
-  "Regular expression matching a property line.")
+(defconst org-property-re
+  "^\\(?4:[ \t]*\\)\\(?1::\\(?2:.*?\\):\\)[ \t]+\\(?3:[^ \t\r\n].*?\\)\\(?5:[ \t]*\\)$"
+  "Regular expression matching a property line.
+There are four matching groups:
+1: :PROPKEY: including the leading and trailing colon,
+2: PROPKEY without the leading and trailing colon,
+3: PROPVAL without leading or trailing spaces,
+4: the indentation of the current line,
+5: trailing whitespace.")
 
 (defvar org-font-lock-hook nil
   "Functions to be called for special font lock stuff.")
@@ -8960,26 +8962,30 @@ buffer.  It will also recognize item context in multiline items."
     (let ((f (or (car-safe cell) cell))
 	  (disable-when-heading-prefix (cdr-safe cell)))
       (when (fboundp f)
-	(dolist (binding (nconc (where-is-internal f org-mode-map)
-				(where-is-internal f outline-mode-map)))
-	  ;; TODO use local-function-key-map
-	  (dolist (rep '(("<tab>" . "TAB")
-			 ("<return>" . "RET")
-			 ("<escape>" . "ESC")
-			 ("<delete>" . "DEL")))
-	    (setq binding (read-kbd-macro
-			   (let ((case-fold-search))
-			     (replace-regexp-in-string
-			      (regexp-quote (cdr rep))
-			      (car rep)
-			      (key-description binding))))))
-	  (let ((key (lookup-key orgstruct-mode-map binding)))
-	    (when (or (not key) (numberp key))
-	      (condition-case nil
-		  (org-defkey orgstruct-mode-map
-			      binding
-			      (orgstruct-make-binding f binding disable-when-heading-prefix))
-		(error nil))))))))
+	(let ((new-bindings))
+	  (dolist (binding (nconc (where-is-internal f org-mode-map)
+				  (where-is-internal f outline-mode-map)))
+	    (push binding new-bindings)
+	    ;; TODO use local-function-key-map
+	    (dolist (rep '(("<tab>" . "TAB")
+			   ("<return>" . "RET")
+			   ("<escape>" . "ESC")
+			   ("<delete>" . "DEL")))
+	      (setq binding (read-kbd-macro
+			     (let ((case-fold-search))
+			       (replace-regexp-in-string
+				(regexp-quote (cdr rep))
+				(car rep)
+				(key-description binding)))))
+	      (pushnew binding new-bindings :test 'equal)))
+	  (dolist (binding new-bindings)
+	    (let ((key (lookup-key orgstruct-mode-map binding)))
+	      (when (or (not key) (numberp key))
+		(condition-case nil
+		    (org-defkey orgstruct-mode-map
+				binding
+				(orgstruct-make-binding f binding disable-when-heading-prefix))
+		  (error nil)))))))))
   (run-hooks 'orgstruct-setup-hook))
 
 (defun orgstruct-make-binding (fun key disable-when-heading-prefix)
@@ -15106,13 +15112,9 @@ When INCREMENT is non-nil, set the property to the next allowed value."
 (defun org-at-property-p ()
   "Is cursor inside a property drawer?"
   (save-excursion
-    (beginning-of-line 1)
-    (when (looking-at (org-re "^[ \t]*\\(:\\([[:alpha:]][[:alnum:]_-]*\\):\\)[ \t]*\\(.*\\)"))
-      (save-match-data ;; Used by calling procedures
-	(let ((p (point))
-	      (range (unless (org-before-first-heading-p)
-		       (org-get-property-block))))
-	  (and range (<= (car range) p) (< p (cdr range))))))))
+    (when (equal 'node-property (car (org-element-at-point)))
+      (beginning-of-line 1)
+      (looking-at org-property-re))))
 
 (defun org-get-property-block (&optional beg end force)
   "Return the (beg . end) range of the body of the property drawer.
@@ -15237,11 +15239,10 @@ things up because then unnecessary parsing is avoided."
 	    (setq range (org-get-property-block beg end))
 	    (when range
 	      (goto-char (car range))
-	      (while (re-search-forward
-		      (org-re "^[ \t]*:\\([[:alpha:]][[:alnum:]_-]*\\):[ \t]*\\(\\S-.*\\)?")
+	      (while (re-search-forward org-property-re
 		      (cdr range) t)
-		(setq key (org-match-string-no-properties 1)
-		      value (org-trim (or (org-match-string-no-properties 2) "")))
+		(setq key (org-match-string-no-properties 2)
+		      value (org-trim (or (org-match-string-no-properties 3) "")))
 		(unless (member key excluded)
 		  (push (cons key (or value "")) props)))))
 	  (if clocksum
@@ -15510,10 +15511,9 @@ formats in the current buffer."
 	(while (re-search-forward org-property-start-re nil t)
 	  (setq range (org-get-property-block))
 	  (goto-char (car range))
-	  (while (re-search-forward
-		  (org-re "^[ \t]*:\\([-[:alnum:]_]+\\):")
+	  (while (re-search-forward org-property-re
 		  (cdr range) t)
-	    (add-to-list 'rtn (org-match-string-no-properties 1)))
+	    (add-to-list 'rtn (org-match-string-no-properties 2)))
 	  (outline-next-heading))))
 
     (when include-specials
@@ -18502,18 +18502,20 @@ share a good deal of logic."
 
 (declare-function org-export--get-global-options "ox" (&optional backend))
 (declare-function org-export--get-inbuffer-options "ox" (&optional backend))
+(declare-function org-latex-guess-inputenc "ox-latex" (header))
+(declare-function org-latex-guess-babel-language "ox-latex" (header info))
 (defun org-create-formula--latex-header ()
   "Return LaTeX header appropriate for previewing a LaTeX snippet."
-  (org-latex-guess-inputenc
-   (org-splice-latex-header
-    org-format-latex-header
-    org-latex-default-packages-alist
-    org-latex-packages-alist t
-    (plist-get
-     (org-combine-plists
-      (org-export--get-global-options 'latex)
-      (org-export--get-inbuffer-options 'latex))
-     :latex-header))))
+  (let ((info (org-combine-plists (org-export--get-global-options 'latex)
+				  (org-export--get-inbuffer-options 'latex))))
+    (org-latex-guess-babel-language
+     (org-latex-guess-inputenc
+      (org-splice-latex-header
+       org-format-latex-header
+       org-latex-default-packages-alist
+       org-latex-packages-alist t
+       (plist-get info :latex-header)))
+     info)))
 
 ;; This function borrows from Ganesh Swami's latex2png.el
 (defun org-create-formula-image-with-dvipng (string tofile options buffer)
@@ -21749,6 +21751,20 @@ Taken from `reduce' in cl-seq.el with all keyword arguments but
       (setq cl-accum (funcall cl-func cl-accum (pop cl-seq))))
     cl-accum))
 
+(defun org-every (pred seq)
+  "Return true if PREDICATE is true of every element of SEQ.
+Adapted from `every' in cl.el."
+  (catch 'org-every
+    (mapc (lambda (e) (unless (funcall pred e) (throw 'org-every nil))) seq)
+    t))
+
+(defun org-some (pred seq)
+  "Return true if PREDICATE is true of any element of SEQ.
+Adapted from `some' in cl.el."
+  (catch 'org-some
+    (mapc (lambda (e) (when (funcall pred e) (throw 'org-some t))) seq)
+    nil))
+
 (defun org-back-over-empty-lines ()
   "Move backwards over whitespace, to the beginning of the first empty line.
 Returns the number of empty lines passed."
@@ -22016,11 +22032,10 @@ hierarchy of headlines by UP levels before marking the subtree."
       ;; Special polishing for properties, see `org-property-format'
       (setq column (current-column))
       (beginning-of-line 1)
-      (if (looking-at
-	   "\\([ \t]*\\)\\(:[-_0-9a-zA-Z]+:\\)[ \t]*\\(\\S-.*\\(\\S-\\|$\\)\\)")
-	  (replace-match (concat (match-string 1)
+      (if (looking-at org-property-re)
+	  (replace-match (concat (match-string 4)
 				 (format org-property-format
-					 (match-string 2) (match-string 3)))
+					 (match-string 1) (match-string 3)))
 			 t t))
       (org-move-to-column column))))
 
@@ -22112,18 +22127,18 @@ hierarchy of headlines by UP levels before marking the subtree."
 
 (defvar org-element-paragraph-separate) ; org-element.el
 (defun org-fill-paragraph-separate-nobreak-p ()
-  "Non-nil when a line break at point would insert a new item."
+  "Non-nil when a new line at point would end current paragraph."
   (looking-at (substring org-element-paragraph-separate 1)))
 
 (defun org-fill-line-break-nobreak-p ()
-  "Non-nil when a line break at point would create an Org line break."
+  "Non-nil when a new line at point would create an Org line break."
   (save-excursion
     (skip-chars-backward "[ \t]")
     (skip-chars-backward "\\\\")
     (looking-at "\\\\\\\\\\($\\|[^\\\\]\\)")))
 
 (defun org-fill-paragraph-with-timestamp-nobreak-p ()
-  "Non-nil when a line break at point would insert a new item."
+  "Non-nil when a new line at point would split a timestamp."
   (and (org-at-timestamp-p t)
        (not (looking-at org-ts-regexp-both))))
 
@@ -22571,7 +22586,7 @@ to work in this buffer and calls `reftex-citation'  to insert a citation
 into the buffer.
 
 Export of such citations to both LaTeX and HTML is handled by the contributed
-package org-exp-bibtex by Taru Karttunen."
+package ox-bibtex by Taru Karttunen."
   (interactive)
   (let ((reftex-docstruct-symbol 'rds)
 	(reftex-cite-format "\\cite{%l}")
@@ -23596,7 +23611,8 @@ To get rid of the restriction, use \\[org-agenda-remove-restriction-lock]."
 	 (not (member-ignore-case word (org-get-export-keywords)))
 	 (not (member-ignore-case
 	       word (mapcar 'car org-element-block-name-alist)))
-	 (not (member-ignore-case word '("BEGIN" "END" "ATTR"))))))
+	 (not (member-ignore-case word '("BEGIN" "END" "ATTR")))
+	 (not (org-in-src-block-p)))))
 
 (defun org-remove-flyspell-overlays-in (beg end)
   "Remove flyspell overlays in region."

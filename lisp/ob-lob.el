@@ -120,19 +120,24 @@ if so then run the appropriate source block from the Library."
 (defun org-babel-lob-execute (info)
   "Execute the lob call specified by INFO."
   (let* ((mkinfo (lambda (p) (list "emacs-lisp" "results" p nil nil (nth 2 info))))
-	 (pre-params (org-babel-merge-params
-		      org-babel-default-header-args
-		      org-babel-default-header-args:emacs-lisp
-		      (org-babel-params-from-properties)
-		      (org-babel-parse-header-arguments
-		       (org-no-properties
-			(concat ":var results="
-				(mapconcat #'identity (butlast info) " "))))))
+	 (pre-params (apply #'org-babel-merge-params
+			    org-babel-default-header-args
+			    org-babel-default-header-args:emacs-lisp
+			    (append
+			     (org-babel-params-from-properties)
+			     (list
+			      (org-babel-parse-header-arguments
+			       (org-no-properties
+				(concat
+				 ":var results="
+				 (mapconcat #'identity (butlast info)
+					    " "))))))))
 	 (pre-info (funcall mkinfo pre-params))
 	 (cache-p (and (cdr (assoc :cache pre-params))
 		       (string= "yes" (cdr (assoc :cache pre-params)))))
 	 (new-hash (when cache-p (org-babel-sha1-hash pre-info)))
-	 (old-hash (when cache-p (org-babel-current-result-hash))))
+	 (old-hash (when cache-p (org-babel-current-result-hash)))
+	 (org-babel-current-src-block-location (point-marker)))
     (if (and cache-p (equal new-hash old-hash))
 	(save-excursion (goto-char (org-babel-where-is-src-block-result))
 			(forward-line 1)

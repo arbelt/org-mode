@@ -60,12 +60,27 @@
     (y-labels	. :any)
     (timefmt	. :any)
     (time-ind	. :any)
-    (missing	. :any))
+    (missing	. :any)
+    (term       . :any))
   "Gnuplot specific header args.")
 
 (defvar org-babel-gnuplot-timestamp-fmt nil)
 
 (defvar *org-babel-gnuplot-missing* nil)
+
+(defcustom *org-babel-gnuplot-prefix* nil
+  "Optional prefix to send to gnuplot before the body of every code block.
+For example \"reset\" may be used to reset gnuplot between
+blocks."
+  :group 'org-babel
+  :type 'string)
+
+(defcustom *org-babel-gnuplot-terms*
+  '((eps . "postscript eps"))
+  "List of file extensions and the associated gnuplot terminal."
+  :group 'org-babel
+  :type '(repeat (cons (symbol :tag "File extension")
+		       (string :tag "Gnuplot terminal"))))
 
 (defun org-babel-gnuplot-process-vars (params)
   "Extract variables from PARAMS and process the variables.
@@ -89,7 +104,11 @@ code."
     (let* ((vars (org-babel-gnuplot-process-vars params))
            (out-file (cdr (assoc :file params)))
            (term (or (cdr (assoc :term params))
-                     (when out-file (file-name-extension out-file))))
+                     (when out-file
+		       (let ((ext (file-name-extension out-file)))
+			 (or (cdr (assoc (intern (downcase ext))
+					 *org-babel-gnuplot-terms*))
+			     ext)))))
            (cmdline (cdr (assoc :cmdline params)))
            (title (cdr (assoc :title params)))
            (lines (cdr (assoc :line params)))
@@ -128,8 +147,11 @@ code."
 	(funcall add-to-body (concat "set timefmt \""
 				     (or timefmt
 					 "%Y-%m-%d-%H:%M:%S") "\"")))
-      (when out-file (funcall add-to-body (format "set output \"%s\""
-						  out-file)))
+      (when out-file
+	;; set the terminal at the top of the block
+	(funcall add-to-body (format "set output \"%s\"" out-file))
+	;; and close the terminal at the bottom of the block
+	(setq body (concat body "\nset output\n")))
       (when term (funcall add-to-body (format "set term %s" term)))
       ;; insert variables into code body: this should happen last
       ;; placing the variables at the *top* of the code in case their
@@ -143,7 +165,9 @@ code."
       (mapc (lambda (pair)
 	      (setq body (replace-regexp-in-string
 			  (format "\\$%s" (car pair)) (cdr pair) body)))
-	    vars))
+	    vars)
+      (when *org-babel-gnuplot-prefix*
+	(funcall add-to-body *org-babel-gnuplot-prefix*)))
     body))
 
 (defun org-babel-execute:gnuplot (body params)

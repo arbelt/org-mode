@@ -1642,7 +1642,14 @@ Another text. (ref:text)
   (should-not
    (org-test-with-parsed-data "[[target]]"
      (org-export-resolve-fuzzy-link
-      (org-element-map tree 'link 'identity info t) info))))
+      (org-element-map tree 'link 'identity info t) info)))
+  ;; Match fuzzy link even when before first headline.
+  (should
+   (eq 'headline
+       (org-test-with-parsed-data "[[hl]]\n* hl"
+	 (org-element-type
+	  (org-export-resolve-fuzzy-link
+	   (org-element-map tree 'link 'identity info t) info))))))
 
 (ert-deftest test-org-export/resolve-id-link ()
   "Test `org-export-resolve-id-link' specifications."
@@ -1739,23 +1746,30 @@ Another text. (ref:text)
 
 (ert-deftest test-org-export/unravel-code ()
   "Test `org-export-unravel-code' function."
-  (let ((org-coderef-label-format "(ref:%s)"))
-    ;; 1. Code without reference.
-    (org-test-with-temp-text "#+BEGIN_EXAMPLE\n(+ 1 1)\n#+END_EXAMPLE"
-      (should (equal (org-export-unravel-code (org-element-at-point))
-		     '("(+ 1 1)\n"))))
-    ;; 2. Code with reference.
-    (org-test-with-temp-text
-	"#+BEGIN_EXAMPLE\n(+ 1 1) (ref:test)\n#+END_EXAMPLE"
-      (should (equal (org-export-unravel-code (org-element-at-point))
-		     '("(+ 1 1)\n" (1 . "test")))))
-    ;; 3. Code with user-defined reference.
+  ;; Code without reference.
+  (should
+   (equal '("(+ 1 1)\n")
+	  (org-test-with-temp-text "#+BEGIN_EXAMPLE\n(+ 1 1)\n#+END_EXAMPLE"
+	    (org-export-unravel-code (org-element-at-point)))))
+  ;; Code with reference.
+  (should
+   (equal '("(+ 1 1)\n" (1 . "test"))
+	  (org-test-with-temp-text
+	      "#+BEGIN_EXAMPLE\n(+ 1 1) (ref:test)\n#+END_EXAMPLE"
+	    (let  ((org-coderef-label-format "(ref:%s)"))
+	      (org-export-unravel-code (org-element-at-point))))))
+  ;; Code with user-defined reference.
+  (should
+   (equal
+    '("(+ 1 1)\n" (1 . "test"))
     (org-test-with-temp-text
 	"#+BEGIN_EXAMPLE -l \"[ref:%s]\"\n(+ 1 1) [ref:test]\n#+END_EXAMPLE"
-      (should (equal (org-export-unravel-code (org-element-at-point))
-		     '("(+ 1 1)\n" (1 . "test")))))
-    ;; 4. Code references keys are relative to the current block.
-    (org-test-with-temp-text "
+      (let ((org-coderef-label-format "(ref:%s)"))
+	(org-export-unravel-code (org-element-at-point))))))
+  ;; Code references keys are relative to the current block.
+  (should
+   (equal '("(+ 2 2)\n(+ 3 3)\n" (2 . "one"))
+	  (org-test-with-temp-text "
 #+BEGIN_EXAMPLE -n
 \(+ 1 1)
 #+END_EXAMPLE
@@ -1763,9 +1777,9 @@ Another text. (ref:text)
 \(+ 2 2)
 \(+ 3 3) (ref:one)
 #+END_EXAMPLE"
-      (goto-line 5)
-      (should (equal (org-export-unravel-code (org-element-at-point))
-		     '("(+ 2 2)\n(+ 3 3)\n" (2 . "one")))))))
+	    (goto-line 5)
+	    (let ((org-coderef-label-format "(ref:%s)"))
+	      (org-export-unravel-code (org-element-at-point)))))))
 
 (ert-deftest test-org-export/format-code-default ()
   "Test `org-export-format-code-default' specifications."
