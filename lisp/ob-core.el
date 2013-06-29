@@ -444,6 +444,7 @@ then run `org-babel-switch-to-session'."
     (dir	. :any)
     (eval	. ((never query)))
     (exports	. ((code results both none)))
+    (epilogue   . :any)
     (file	. :any)
     (file-desc  . :any)
     (hlines	. ((no yes)))
@@ -455,6 +456,7 @@ then run `org-babel-switch-to-session'."
     (noweb-sep  . :any)
     (padline	. ((yes no)))
     (post       . :any)
+    (prologue   . :any)
     (results	. ((file list vector table scalar verbatim)
 		   (raw html latex org code pp drawer)
 		   (replace silent none append prepend)
@@ -560,7 +562,11 @@ Optionally supply a value for PARAMS which will be merged with
 the header arguments specified at the front of the source code
 block."
   (interactive)
-  (let* ((info (if info
+  (let* ((org-babel-current-src-block-location
+	  (or org-babel-current-src-block-location
+	      (nth 6 info)
+	      (org-babel-where-is-src-block-head)))
+	 (info (if info
 		   (copy-tree info)
 		 (org-babel-get-src-block-info)))
 	 (merged-params (org-babel-merge-params (nth 2 info) params)))
@@ -569,8 +575,6 @@ block."
       (let* ((params (if params
 			 (org-babel-process-params merged-params)
 		       (nth 2 info)))
-	     (org-babel-current-src-block-location
-	      (or org-babel-current-src-block-location (nth 6 info)))
 	     (cachep (and (not arg) (cdr (assoc :cache params))
 			   (string= "yes" (cdr (assoc :cache params)))))
 	     (new-hash (when cachep (org-babel-sha1-hash info)))
@@ -671,7 +675,14 @@ Expand a block of code with org-babel according to its header
 arguments.  This generic implementation of body expansion is
 called for languages which have not defined their own specific
 org-babel-expand-body:lang function."
-  (mapconcat #'identity (append var-lines (list body)) "\n"))
+  (let ((pro (cdr (assoc :prologue params)))
+	(epi (cdr (assoc :epilogue params))))
+    (mapconcat #'identity
+	       (append (when pro (list pro))
+		       var-lines
+		       (list body)
+		       (when epi (list epi)))
+	       "\n")))
 
 ;;;###autoload
 (defun org-babel-expand-src-block (&optional arg info params)
@@ -1295,7 +1306,8 @@ Return a list of association lists of source block params
 specified in the properties of the current outline entry."
   (save-match-data
     (list
-     ;; header arguments specified as separate property
+     ;; DEPRECATED header arguments specified as separate property at
+     ;; point of definition
      (let (val sym)
        (org-babel-parse-multiple-vars
 	(delq nil
@@ -1313,16 +1325,15 @@ specified in the properties of the current outline entry."
 		  (progn
 		    (setq sym (intern (concat "org-babel-header-args:" lang)))
 		    (and (boundp sym) (eval sym))))))))))
-     ;; header arguments specified with the header-args property
-     (save-match-data
-       (org-babel-parse-header-arguments
-	(org-entry-get (point) "header-args"
-		       'inherit)))
-     ;; language-specific header arguments
-     (save-match-data
-       (org-babel-parse-header-arguments
-	(org-entry-get (point) (concat "header-args:" lang)
-		       'inherit))))))
+     ;; header arguments specified with the header-args property at
+     ;; point of call
+     (org-babel-parse-header-arguments
+      (org-entry-get org-babel-current-src-block-location
+		     "header-args" 'inherit))
+     (when lang ;; language-specific header arguments at point of call
+	 (org-babel-parse-header-arguments
+	  (org-entry-get org-babel-current-src-block-location
+			 (concat "header-args:" lang) 'inherit))))))
 
 (defvar org-src-preserve-indentation)
 (defun org-babel-parse-src-block-match ()
@@ -1502,22 +1513,18 @@ names."
 (defun org-babel-get-rownames (table)
   "Return the row names of TABLE.
 Return a cons cell, the `car' of which contains the TABLE less
-colnames, and the `cdr' of which contains a list of the column
-names.  Note: this function removes any hlines in TABLE."
-  (let* ((trans (lambda (table) (apply #'mapcar* #'list table)))
-	 (width (apply 'max
-		       (mapcar (lambda (el) (if (listp el) (length el) 0)) table)))
-	 (table (funcall trans (mapcar (lambda (row)
-					 (if (not (equal row 'hline))
-					     row
-					   (setq row '())
-					   (dotimes (n width)
-					     (setq row (cons 'hline row)))
-					   row))
-				       table))))
-    (cons (mapcar (lambda (row) (if (equal (car row) 'hline) 'hline row))
-		  (funcall trans (cdr table)))
-	  (remove 'hline (car table)))))
+rownames, and the `cdr' of which contains a list of the rownames.
+Note: this function removes any hlines in TABLE."
+  (let* ((table (org-babel-del-hlines table))
+	 (rownames (funcall (lambda ()
+			      (let ((tp table))
+				(mapcar
+				 (lambda (row)
+				   (prog1
+				       (pop (car tp))
+				     (setq tp (cdr tp))))
+				 table))))))
+    (cons table rownames)))
 
 (defun org-babel-put-colnames (table colnames)
   "Add COLNAMES to TABLE if they exist."
@@ -1894,14 +1901,14 @@ following the source block."
      ((org-at-item-p) (org-babel-read-list))
      ((looking-at org-bracket-link-regexp) (org-babel-read-link))
      ((looking-at org-block-regexp) (org-babel-trim (match-string 4)))
-     ((looking-at "^[ \t]*: ")
+     ((or (looking-at "^[ \t]*: ") (looking-at "^[ \t]*:$"))
       (setq result-string
 	    (org-babel-trim
 	     (mapconcat (lambda (line)
-                          (if (and (> (length line) 1)
-                                   (string-match "^[ \t]*: \\(.+\\)" line))
-                              (match-string 1 line)
-                            line))
+                          (or (and (> (length line) 1)
+				   (string-match "^[ \t]*: ?\\(.+\\)" line)
+				   (match-string 1 line))
+			      ""))
 			(split-string
 			 (buffer-substring
                           (point) (org-babel-result-end)) "[\r\n]+")
@@ -2165,7 +2172,7 @@ code ---- the results are extracted in the syntax of the source
 	    (progn (re-search-forward (concat "[ \t]*#\\+end_" (match-string 1))
 				      nil t)
 		   (forward-char 1))
-	  (while (looking-at "[ \t]*\\(: \\|\\[\\[\\)")
+	  (while (looking-at "[ \t]*\\(: \\|:$\\|\\[\\[\\)")
 	    (forward-line 1))))
       (point)))))
 

@@ -5317,8 +5317,6 @@ The following commands are available:
   (org-set-local 'outline-regexp org-outline-regexp)
   (org-set-local 'outline-level 'org-outline-level)
   (setq bidi-paragraph-direction 'left-to-right)
-  ;; FIXME Circumvent a bug in outline.el (Emacs <24.4)
-  (set (make-local-variable 'paragraph-start) "\\|[ \t]*$\\|\\*+ ")
   (when (and org-ellipsis
              (fboundp 'set-display-table-slot) (boundp 'buffer-display-table)
 	     (fboundp 'make-glyph-code))
@@ -6122,8 +6120,15 @@ Use `org-reduced-level' to remove the effect of `org-odd-levels'."
 
 (defvar org-font-lock-keywords nil)
 
+(defsubst org-re-property (property &optional literal)
+  "Return a regexp matching a PROPERTY line.
+Match group 3 will be set to the value if it exists."
+  (concat "^\\(?4:[ \t]*\\)\\(?1::\\(?2:"
+	  (if literal property (regexp-quote property))
+	  "\\):\\)[ \t]+\\(?3:[^ \t\r\n].*?\\)\\(?5:[ \t]*\\)$"))
+
 (defconst org-property-re
-  "^\\(?4:[ \t]*\\)\\(?1::\\(?2:.*?\\):\\)[ \t]+\\(?3:[^ \t\r\n].*?\\)\\(?5:[ \t]*\\)$"
+  (org-re-property ".*?" 'literal)
   "Regular expression matching a property line.
 There are four matching groups:
 1: :PROPKEY: including the leading and trailing colon,
@@ -13807,7 +13812,6 @@ headlines matching this string."
 			      (abbreviate-file-name
 			       (or (buffer-file-name (buffer-base-buffer))
 				   (buffer-name (buffer-base-buffer)))))))
-	 (case-fold-search nil)
 	 (org-map-continue-from nil)
          lspos tags tags-list
 	 (tags-alist (list (cons 0 org-file-tags)))
@@ -13820,7 +13824,8 @@ headlines matching this string."
       (when (eq action 'sparse-tree)
 	(org-overview)
 	(org-remove-occur-highlights))
-      (while (re-search-forward re nil t)
+      (while (let (case-fold-search)
+	       (re-search-forward re nil t))
 	(setq org-map-continue-from nil)
 	(catch :skip
 	  (setq todo (if (match-end 1) (org-match-string-no-properties 2))
@@ -15022,16 +15027,6 @@ Being in this list makes sure that they are offered for completion.")
 	  org-property-end-re "\\)\n?")
   "Matches an entire clock drawer.")
 
-(defsubst org-re-property (property)
-  "Return a regexp matching a PROPERTY line.
-Match group 1 will be set to the value."
-  (concat "^[ \t]*:" (regexp-quote property) ":[ \t]*\\(\\S-.*\\)"))
-
-(defsubst org-re-property-keyword (property)
-  "Return a regexp matching a PROPERTY line, possibly with no
-value for the property."
-  (concat "^[ \t]*:" (regexp-quote property) ":[ \t]*\\(\\S-.*\\)?"))
-
 (defun org-property-action ()
   "Do an action on properties."
   (interactive)
@@ -15291,8 +15286,8 @@ when a \"nil\" value can supersede a non-nil value higher up the hierarchy."
 			   (setq props
 				 (org-update-property-plist
 				  key
-				  (if (match-end 1)
-				      (org-match-string-no-properties 1) "")
+				  (if (match-end 3)
+				      (org-match-string-no-properties 3) "")
 				  props)))))
 		   val)
 	      (goto-char (car range))
@@ -15481,7 +15476,7 @@ and the new value.")
 	  (setq range (org-get-property-block beg end 'force))
 	  (goto-char (car range))
 	  (if (re-search-forward
-	       (org-re-property-keyword property) (cdr range) t)
+	       (org-re-property property) (cdr range) t)
 	      (progn
 		(delete-region (match-beginning 0) (match-end 0))
 		(goto-char (match-beginning 0)))
@@ -15551,7 +15546,7 @@ formats in the current buffer."
       (let ((re (org-re-property key))
 	    values)
 	(while (re-search-forward re nil t)
-	  (add-to-list 'values (org-trim (match-string 1))))
+	  (add-to-list 'values (org-trim (match-string 3))))
 	(delete "" values)))))
 
 (defun org-insert-property-drawer ()
@@ -22108,27 +22103,25 @@ hierarchy of headlines by UP levels before marking the subtree."
 ;; `org-setup-filling' installs filling and auto-filling related
 ;; variables during `org-mode' initialization.
 
+(defvar org-element-paragraph-separate) ; org-element.el
 (defun org-setup-filling ()
-  (interactive)
+  (require 'org-element)
   ;; Prevent auto-fill from inserting unwanted new items.
   (when (boundp 'fill-nobreak-predicate)
     (org-set-local
      'fill-nobreak-predicate
      (org-uniquify
       (append fill-nobreak-predicate
-	      '(org-fill-paragraph-separate-nobreak-p
-		org-fill-line-break-nobreak-p
+	      '(org-fill-line-break-nobreak-p
 		org-fill-paragraph-with-timestamp-nobreak-p)))))
+  (let ((paragraph-ending (substring org-element-paragraph-separate 1)))
+    (org-set-local 'paragraph-start paragraph-ending)
+    (org-set-local 'paragraph-separate paragraph-ending))
   (org-set-local 'fill-paragraph-function 'org-fill-paragraph)
   (org-set-local 'auto-fill-inhibit-regexp nil)
   (org-set-local 'adaptive-fill-function 'org-adaptive-fill-function)
   (org-set-local 'normal-auto-fill-function 'org-auto-fill-function)
   (org-set-local 'comment-line-break-function 'org-comment-line-break-function))
-
-(defvar org-element-paragraph-separate) ; org-element.el
-(defun org-fill-paragraph-separate-nobreak-p ()
-  "Non-nil when a new line at point would end current paragraph."
-  (looking-at (substring org-element-paragraph-separate 1)))
 
 (defun org-fill-line-break-nobreak-p ()
   "Non-nil when a new line at point would create an Org line break."
