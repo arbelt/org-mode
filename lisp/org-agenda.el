@@ -3130,9 +3130,10 @@ longer string it is used as a tags/todo match string.
 Parameters are alternating variable names and values that will be bound
 before running the agenda command."
   (org-eval-in-environment (org-make-parameter-alist parameters)
-    (if (> (length cmd-key) 2)
-	(org-tags-view nil cmd-key)
-      (org-agenda nil cmd-key)))
+    (let (org-agenda-sticky)
+      (if (> (length cmd-key) 2)
+	  (org-tags-view nil cmd-key)
+	(org-agenda nil cmd-key))))
   (set-buffer org-agenda-buffer-name)
   (princ (buffer-string)))
 
@@ -8378,7 +8379,7 @@ Point is in the buffer where the item originated.")
 	    (if (and confirm
 		     (not (y-or-n-p "Archive this subtree or entry? ")))
 		(error "Abort")
-	      (save-excursion
+	      (save-window-excursion
 		(goto-char pos)
 		(let ((org-agenda-buffer-name bufname-orig))
 		  (org-remove-subtree-entries-from-agenda))
