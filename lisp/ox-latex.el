@@ -2050,11 +2050,11 @@ contextual information."
 	       (float-env
 		(cond ((and (not float) (plist-member attributes :float)) "%s")
 		      ((string= "multicolumn" float)
-		       (format "\\begin{figure*}[%s]\n%s%%s\n\\end{figure*}"
+		       (format "\\begin{figure*}[%s]\n%%s%s\n\\end{figure*}"
 			       org-latex-default-figure-position
 			       caption-str))
 		      ((or caption float)
-		       (format "\\begin{figure}[H]\n%s%%s\n\\end{figure}"
+		       (format "\\begin{figure}[H]\n%%s%s\n\\end{figure}"
 			       caption-str))
 		      (t "%s"))))
 	  (format
@@ -2723,23 +2723,8 @@ Export is done in a buffer named \"*Org LATEX Export*\", which
 will be displayed when `org-export-show-temporary-export-buffer'
 is non-nil."
   (interactive)
-  (if async
-      (org-export-async-start
-	  (lambda (output)
-	    (with-current-buffer (get-buffer-create "*Org LATEX Export*")
-	      (erase-buffer)
-	      (insert output)
-	      (goto-char (point-min))
-	      (LaTeX-mode)
-	      (org-export-add-to-stack (current-buffer) 'latex)))
-	`(org-export-as 'latex ,subtreep ,visible-only ,body-only
-			',ext-plist))
-    (let ((outbuf
-	   (org-export-to-buffer 'latex "*Org LATEX Export*"
-				 subtreep visible-only body-only ext-plist)))
-      (with-current-buffer outbuf (LaTeX-mode))
-      (when org-export-show-temporary-export-buffer
-	(switch-to-buffer-other-window outbuf)))))
+  (org-export-to-buffer 'latex "*Org LATEX Export*"
+    async subtreep visible-only body-only ext-plist (lambda () (LaTeX-mode))))
 
 ;;;###autoload
 (defun org-latex-convert-region-to-latex ()
@@ -2776,19 +2761,11 @@ between \"\\begin{document}\" and \"\\end{document}\".
 
 EXT-PLIST, when provided, is a property list with external
 parameters overriding Org default settings, but still inferior to
-file-local settings.
-
-Return output file's name."
+file-local settings."
   (interactive)
   (let ((outfile (org-export-output-file-name ".tex" subtreep)))
-    (if async
-	(org-export-async-start
-	    (lambda (f) (org-export-add-to-stack f 'latex))
-	  `(expand-file-name
-	    (org-export-to-file
-	     'latex ,outfile ,subtreep ,visible-only ,body-only ',ext-plist)))
-      (org-export-to-file
-       'latex outfile subtreep visible-only body-only ext-plist))))
+    (org-export-to-file 'latex outfile
+      async subtreep visible-only body-only ext-plist)))
 
 ;;;###autoload
 (defun org-latex-export-to-pdf
@@ -2820,18 +2797,10 @@ file-local settings.
 
 Return PDF file's name."
   (interactive)
-  (if async
-      (let ((outfile (org-export-output-file-name ".tex" subtreep)))
-	(org-export-async-start
-	    (lambda (f) (org-export-add-to-stack f 'latex))
-	  `(expand-file-name
-	    (org-latex-compile
-	     (org-export-to-file
-	      'latex ,outfile ,subtreep ,visible-only ,body-only
-	      ',ext-plist)))))
-    (org-latex-compile
-     (org-latex-export-to-latex
-      nil subtreep visible-only body-only ext-plist))))
+  (let ((outfile (org-export-output-file-name ".tex" subtreep)))
+    (org-export-to-file 'latex outfile
+      async subtreep visible-only body-only ext-plist
+      (lambda (file) (org-latex-compile file)))))
 
 (defun org-latex-compile (texfile &optional snippet)
   "Compile a TeX file.
