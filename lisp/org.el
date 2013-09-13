@@ -3780,8 +3780,6 @@ images at the same place."
 
 (defcustom org-format-latex-header "\\documentclass{article}
 \\usepackage[usenames]{color}
-\\usepackage{amsmath}
-\\usepackage[mathscr]{eucal}
 \[PACKAGES]
 \[DEFAULT-PACKAGES]
 \\pagestyle{empty}             % do not remove
@@ -3832,11 +3830,11 @@ header, or they will be appended."
     (""     "float"     nil)
     (""     "wrapfig"   nil)
     ("normalem" "ulem"  t)
+    (""     "amsmath"   t)
     (""     "textcomp"  t)
     (""     "marvosym"  t)
     (""     "wasysym"   t)
     (""     "amssymb"   t)
-    (""     "amstext"   nil)
     (""     "hyperref"  nil)
     "\\tolerance=1000")
   "Alist of default packages to be inserted in the header.
@@ -3848,7 +3846,7 @@ The packages in this list are needed by one part or another of
 Org mode to function properly:
 
 - inputenc, fontenc:  for basic font and character selection
-- amstext: for subscript and superscript
+- amsmath: for subscript and superscript and math environments
 - textcomp, marvosymb, wasysym, amssymb: for various symbols used
   for interpreting the entities in `org-entities'.  You can skip
   some of these packages if you don't use any of their symbols.
@@ -20692,17 +20690,22 @@ number of stars to add."
 
 (defun org-meta-return (&optional arg)
   "Insert a new heading or wrap a region in a table.
-Calls `org-insert-heading' or `org-table-wrap-region', depending on context.
-See the individual commands for more information."
+Calls `org-insert-heading' or `org-table-wrap-region', depending
+on context.  See the individual commands for more information."
   (interactive "P")
   (org-check-before-invisible-edit 'insert)
-  (cond
-   ((run-hook-with-args-until-success 'org-metareturn-hook))
-   ((or (org-at-drawer-p) (org-in-drawer-p) (org-at-property-p))
-    (newline-and-indent))
-   ((org-at-table-p)
-    (call-interactively 'org-table-wrap-region))
-   (t (call-interactively 'org-insert-heading))))
+  (or (run-hook-with-args-until-success 'org-metareturn-hook)
+      (let* ((element (org-element-at-point))
+             (type (org-element-type element)))
+        (when (eq type 'table-row)
+          (setq element (org-element-property :parent element))
+          (setq type 'table))
+        (if (and (eq type 'table)
+                 (eq (org-element-property :type element) 'org)
+                 (>= (point) (org-element-property :contents-begin element))
+                 (< (point) (org-element-property :contents-end element)))
+            (call-interactively 'org-table-wrap-region)
+          (call-interactively 'org-insert-heading)))))
 
 ;;; Menu entries
 

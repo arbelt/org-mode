@@ -683,9 +683,12 @@ Assume point is at the beginning of the footnote definition."
 				    "^\\([ \t]*\n\\)\\{2,\\}") limit 'move))
 			 (match-beginning 0)
 		       (point))))
-	   (contents-begin (progn (search-forward "]")
-				  (skip-chars-forward " \r\t\n" ending)
-				  (and (/= (point) ending) (point))))
+	   (contents-begin (progn
+			     (search-forward "]")
+			     (skip-chars-forward " \r\t\n" ending)
+			     (cond ((= (point) ending) nil)
+				   ((= (line-beginning-position) begin) (point))
+				   (t (line-beginning-position)))))
 	   (contents-end (and contents-begin ending))
 	   (end (progn (goto-char ending)
 		       (skip-chars-forward " \r\t\n" limit)
@@ -2172,20 +2175,21 @@ Assume point is at the beginning of the paragraph."
 				(re-search-forward
 				 "^[ \t]*#\\+END:?[ \t]*$" limit t)))
 			 ;; Stop at valid blocks.
-			 (and (looking-at
-			       "[ \t]*#\\+BEGIN_\\(\\S-+\\)")
+			 (and (looking-at "[ \t]*#\\+BEGIN_\\(\\S-+\\)")
 			      (save-excursion
 				(re-search-forward
 				 (format "^[ \t]*#\\+END_%s[ \t]*$"
-					 (match-string 1))
+					 (regexp-quote
+					  (org-match-string-no-properties 1)))
 				 limit t)))
 			 ;; Stop at valid latex environments.
 			 (and (looking-at
-			       "^[ \t]*\\\\begin{\\([A-Za-z0-9]+\\*?\\)}[ \t]*$")
+			       "[ \t]*\\\\begin{\\([A-Za-z0-9]+\\*?\\)}")
 			      (save-excursion
 				(re-search-forward
 				 (format "^[ \t]*\\\\end{%s}[ \t]*$"
-					 (match-string 1))
+					 (regexp-quote
+					  (org-match-string-no-properties 1)))
 				 limit t)))
 			 ;; Stop at valid keywords.
 			 (looking-at "[ \t]*#\\+\\S-+:")
@@ -4735,7 +4739,8 @@ first element of current section."
 	      ;; In blank lines just after the headline, point still
 	      ;; belongs to the headline.
 	      (throw 'exit
-		     (progn (org-back-to-heading)
+		     (progn (skip-chars-backward " \r\t\n")
+			    (beginning-of-line)
 			    (if (not keep-trail)
 				(org-element-headline-parser (point-max) t)
 			      (list (org-element-headline-parser
