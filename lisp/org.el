@@ -1291,6 +1291,11 @@ OK to kill that hidden subtree.  When nil, kill without remorse."
 	  (const :tag "Protect hidden subtrees with a security query" t)
 	  (const :tag "Never kill a hidden subtree with C-k" error)))
 
+(defcustom org-special-ctrl-o t
+  "Non-nil means, make `C-o' insert a row in tables."
+  :group 'org-edit-structure
+  :type 'boolean)
+
 (defcustom org-catch-invisible-edits nil
   "Check if in invisible region before inserting or deleting a character.
 Valid values are:
@@ -1894,13 +1899,9 @@ single keystroke rather than having to type \"yes\"."
   :type 'regexp)
 
 (defconst org-file-apps-defaults-gnu
-  (append
-   '((remote . emacs))
-   (if (executable-find "xdg-open")
-       '((system . "xdg-open %s")
-	 (t . "xdg-open %s"))
-     '((system . mailcap)
-       (t . mailcap))))
+  '((remote . emacs)
+    (system . mailcap)
+    (t . mailcap))
   "Default file applications on a UNIX or GNU/Linux system.
 See `org-file-apps'.")
 
@@ -3829,6 +3830,7 @@ header, or they will be appended."
     (""     "longtable" nil)
     (""     "float"     nil)
     (""     "wrapfig"   nil)
+    (""     "rotating"  nil)
     ("normalem" "ulem"  t)
     (""     "amsmath"   t)
     (""     "textcomp"  t)
@@ -3846,14 +3848,16 @@ The packages in this list are needed by one part or another of
 Org mode to function properly:
 
 - inputenc, fontenc:  for basic font and character selection
+- fixltx2e: Important patches of LaTeX itself
+- graphicx: for including images
+- longtable: For multipage tables
+- float, wrapfig: for figure placement
+- rotating: for sideways figures and tables
+- ulem: for underline and strike-through
 - amsmath: for subscript and superscript and math environments
 - textcomp, marvosymb, wasysym, amssymb: for various symbols used
   for interpreting the entities in `org-entities'.  You can skip
   some of these packages if you don't use any of their symbols.
-- ulem: for underline and strike-through
-- graphicx: for including images
-- float, wrapfig: for figure placement
-- longtable: for long tables
 - hyperref: for cross references
 
 Therefore you should not modify this variable unless you know
@@ -7625,6 +7629,9 @@ This is important for non-interactive uses of the command."
 	  ;; If we insert after content, move there and clean up whitespace
 	  (when respect-content
 	    (org-end-of-subtree nil t)
+	    (skip-chars-backward " \r\n")
+	    (and (looking-at "[ \t]+") (replace-match ""))
+	    (forward-char 1)
 	    (when (looking-at "^\\*")
 	      (backward-char 1)
 	      (insert "\n")))
@@ -15601,7 +15608,9 @@ formats in the current buffer."
 	(beginning-of-line 1)))
     (org-skip-over-state-notes)
     (skip-chars-backward " \t\n\r")
-    (if (eq (char-before) ?*) (forward-char 1))
+    (if (and (eq (char-before) ?*) (not (eq (char-after) ?\n)))
+	(forward-char 1))
+    (goto-char (point-at-eol))
     (let ((inhibit-read-only t)) (insert "\n:PROPERTIES:\n:END:"))
     (beginning-of-line 0)
     (org-indent-to-column indent)
@@ -16034,7 +16043,10 @@ If there is already a timestamp at the cursor, it will be
 modified.
 
 With two universal prefix arguments, insert an active timestamp
-with the current time without prompting the user."
+with the current time without prompting the user.
+
+When called from lisp, the timestamp is inactive if INACTIVE is
+non-nil."
   (interactive "P")
   (let* ((ts nil)
 	 (default-time
@@ -16081,7 +16093,7 @@ with the current time without prompting the user."
 			    " " repeater ">"))))
       (message "Timestamp updated"))
      ((equal arg '(16))
-      (org-insert-time-stamp (current-time) t))
+      (org-insert-time-stamp (current-time) t inactive))
      (t
       (setq time (let ((this-command this-command))
 		   (org-read-date arg 'totime nil nil default-time default-input inactive)))
@@ -19097,8 +19109,8 @@ BEG and END default to the buffer boundaries."
 (org-defkey org-mode-map "\C-c\C-k" 'org-kill-note-or-show-branches)
 (org-defkey org-mode-map "\C-c#"    'org-update-statistics-cookies)
 (org-defkey org-mode-map [remap open-line] 'org-open-line)
-(org-defkey org-mode-map [remap forward-paragraph] 'org-forward-element)
-(org-defkey org-mode-map [remap backward-paragraph] 'org-backward-element)
+(org-defkey org-mode-map [remap forward-paragraph] 'org-forward-paragraph)
+(org-defkey org-mode-map [remap backward-paragraph] 'org-backward-paragraph)
 (org-defkey org-mode-map "\C-m"     'org-return)
 (org-defkey org-mode-map "\C-j"     'org-return-indent)
 (org-defkey org-mode-map "\C-c?"    'org-table-field-info)
@@ -20367,11 +20379,16 @@ Also updates the keyword regular expressions."
       (funcall org-finish-function))))
 
 (defun org-open-line (n)
-  "Insert a new row in tables, call `open-line' elsewhere."
+  "Insert a new row in tables, call `open-line' elsewhere.
+If `org-special-ctrl-o' is nil, just call `open-line' everywhere."
   (interactive "*p")
-  (if (org-at-table-p)
-      (org-table-insert-row)
-    (open-line n)))
+  (cond
+   ((not org-special-ctrl-o)
+    (open-line n))
+   ((org-at-table-p)
+    (org-table-insert-row))
+   (t    
+    (open-line n))))
 
 (defun org-return (&optional indent)
   "Goto next table row or insert a newline.
@@ -23276,6 +23293,152 @@ With a prefix argument ARG, jump backward ARG many source blocks.
 When BLOCK-REGEXP is non-nil, use this regexp to find blocks."
   (interactive "p")
   (org-next-block arg t block-regexp))
+
+(defun org-forward-paragraph ()
+  "Move forward to beginning of next paragraph or equivalent.
+
+The function moves point to the beginning of the next visible
+structural element, which can be a paragraph, a table, a list
+item, etc.  It also provides some special moves for convenience:
+
+  - On an affiliated keyword, jump to the beginning of the
+    relative element.
+  - On an item or a footnote definition, move to the second
+    element inside, if any.
+  - On a table or a property drawer, jump after it.
+  - On a verse or source block, stop after blank lines."
+  (interactive)
+  (when (eobp) (user-error "Cannot move further down"))
+  (let* ((deactivate-mark nil)
+	 (element (org-element-at-point))
+         (type (org-element-type element))
+         (post-affiliated (org-element-property :post-affiliated element))
+         (contents-begin (org-element-property :contents-begin element))
+         (contents-end (org-element-property :contents-end element))
+         (end (let ((end (org-element-property :end element)) (parent element))
+                (while (and (setq parent (org-element-property :parent parent))
+                            (= (org-element-property :contents-end parent) end))
+                  (setq end (org-element-property :end parent)))
+                end)))
+    (cond ((not element)
+           (skip-chars-forward " \r\t\n")
+           (or (eobp) (beginning-of-line)))
+          ;; On affiliated keywords, move to element's beginning.
+          ((and post-affiliated (< (point) post-affiliated))
+           (goto-char post-affiliated))
+          ;; At a table row, move to the end of the table.  Similarly,
+          ;; at a node property, move to the end of the property
+          ;; drawer.
+          ((memq type '(node-property table-row))
+           (goto-char (org-element-property
+                       :end (org-element-property :parent element))))
+          ((memq type '(property-drawer table)) (goto-char end))
+          ;; Consider blank lines as separators in verse and source
+          ;; blocks to ease editing.
+          ((memq type '(src-block verse-block))
+           (when (eq type 'src-block)
+             (setq contents-end
+                   (save-excursion (goto-char end)
+                                   (skip-chars-backward " \r\t\n")
+                                   (line-beginning-position))))
+           (beginning-of-line)
+           (when (looking-at "[ \t]*$") (skip-chars-forward " \r\t\n"))
+           (if (not (re-search-forward "^[ \t]*$" contents-end t))
+               (goto-char end)
+             (skip-chars-forward " \r\t\n")
+             (if (= (point) contents-end) (goto-char end)
+               (beginning-of-line))))
+          ;; With no contents, just skip element.
+          ((not contents-begin) (goto-char end))
+          ;; If contents are invisible, skip the element altogether.
+          ((outline-invisible-p (line-end-position))
+           (case type
+             (headline
+              (org-with-limited-levels (outline-next-visible-heading 1)))
+             ;; At a plain list, make sure we move to the next item
+             ;; instead of skipping the whole list.
+             (plain-list (forward-char)
+                         (org-forward-paragraph))
+             (otherwise (goto-char end))))
+          ((>= (point) contents-end) (goto-char end))
+          ((>= (point) contents-begin)
+           ;; This can only happen on paragraphs and plain lists.
+           (case type
+             (paragraph (goto-char end))
+             ;; At a plain list, try to move to second element in
+             ;; first item, if possible.
+             (plain-list (end-of-line)
+                         (org-forward-paragraph))))
+          ;; When contents start on the middle of a line (e.g. in
+          ;; items and footnote definitions), try to reach first
+          ;; element starting after current line.
+          ((> (line-end-position) contents-begin)
+           (end-of-line)
+           (org-forward-paragraph))
+          (t (goto-char contents-begin)))))
+
+(defun org-backward-paragraph ()
+  "Move backward to start of previous paragraph or equivalent.
+
+The function moves point to the beginning of the current
+structural element, which can be a paragraph, a table, a list
+item, etc., or to the beginning of the previous visible one if
+point is already there.  It also provides some special moves for
+convenience:
+
+  - On an affiliated keyword, jump to the first one.
+  - On a table or a property drawer, move to its beginning.
+  - On a verse or source block, stop before blank lines."
+  (interactive)
+  (when (bobp) (user-error "Cannot move further up"))
+  (let* ((deactivate-mark nil)
+	 (element (org-element-at-point))
+         (type (org-element-type element))
+         (contents-begin (org-element-property :contents-begin element))
+         (contents-end (org-element-property :contents-end element))
+         (post-affiliated (org-element-property :post-affiliated element))
+         (begin (org-element-property :begin element)))
+    (cond
+     ((not element) (goto-char (point-min)))
+     ((= (point) begin)
+      (backward-char)
+      (org-backward-paragraph))
+     ((and post-affiliated (<= (point) post-affiliated)) (goto-char begin))
+     ((memq type '(node-property table-row))
+      (goto-char (org-element-property
+                  :post-affiliated (org-element-property :parent element))))
+     ((memq type '(property-drawer table)) (goto-char begin))
+     ((memq type '(src-block verse-block))
+      (when (eq type 'src-block)
+        (setq contents-begin
+              (save-excursion (goto-char begin) (forward-line) (point))))
+      (if (= (point) contents-begin) (goto-char post-affiliated)
+        ;; Inside a verse block, see blank lines as paragraph
+        ;; separators.
+        (let ((origin (point)))
+          (skip-chars-backward " \r\t\n" contents-begin)
+          (when (re-search-backward "^[ \t]*$" contents-begin 'move)
+            (skip-chars-forward " \r\t\n" origin)
+            (if (= (point) origin) (goto-char contents-begin)
+              (beginning-of-line))))))
+     ((not contents-begin) (goto-char (or post-affiliated begin)))
+     ((eq type 'paragraph)
+      (goto-char contents-begin)
+      ;; When at first paragraph in an item or a footnote definition,
+      ;; move directly to beginning of line.
+      (let ((parent-contents
+             (org-element-property
+              :contents-begin (org-element-property :parent element))))
+        (when (and parent-contents (= parent-contents contents-begin))
+          (beginning-of-line))))
+     ;; At the end of a greater element, move to the beginning of the
+     ;; last element within.
+     ((>= (point) contents-end)
+      (goto-char (1- contents-end))
+      (org-backward-paragraph))
+     (t (goto-char (or post-affiliated begin))))
+    ;; Ensure we never leave point invisible.
+    (when (outline-invisible-p (point)) (beginning-of-visual-line))))
 
 (defun org-forward-element ()
   "Move forward by one element.

@@ -95,6 +95,7 @@
 (declare-function org-unescape-code-in-string "org-src" (s))
 (declare-function org-table-to-lisp "org-table" (&optional txt))
 (declare-function org-reverse-string "org" (string))
+(declare-function org-element-context "org-element" (&optional ELEMENT))
 
 (defgroup org-babel nil
   "Code block evaluation and management in `org-mode' documents."
@@ -188,7 +189,7 @@ This string must include a \"%s\" which will be replaced by the results."
    ;; (4) header arguments
    "\\([^\n]*\\)\n"
    ;; (5) body
-   "\\([^\000]*?\n\\)?[ \t]*#\\+end_src")
+   "\\([^\000]*?\n\\)??[ \t]*#\\+end_src")
   "Regexp used to identify code blocks.")
 
 (defvar org-babel-inline-src-block-regexp
@@ -478,8 +479,7 @@ specific header arguments as well.")
 
 (defvar org-babel-default-header-args
   '((:session . "none") (:results . "replace") (:exports . "code")
-    (:cache . "no") (:noweb . "no") (:hlines . "no") (:tangle . "no")
-    (:padnewline . "yes"))
+    (:cache . "no") (:noweb . "no") (:hlines . "no") (:tangle . "no"))
   "Default arguments to use when evaluating a source block.")
 
 (defvar org-babel-default-inline-header-args
@@ -2159,15 +2159,17 @@ code ---- the results are extracted in the syntax of the source
 	  (set-marker visible-beg nil)
 	  (set-marker visible-end nil))))))
 
-(defun org-babel-remove-result (&optional info)
+(defun org-babel-remove-result (&optional info keep-keyword)
   "Remove the result of the current source block."
   (interactive)
-  (let ((location (org-babel-where-is-src-block-result nil info)) start)
+  (let ((location (org-babel-where-is-src-block-result nil info)))
     (when location
-      (setq start (- location 1))
       (save-excursion
-        (goto-char location) (forward-line 1)
-        (delete-region start (org-babel-result-end))))))
+        (goto-char location)
+	(when (looking-at (concat org-babel-result-regexp ".*$"))
+	  (delete-region
+	   (if keep-keyword (1+ (match-end 0)) (match-beginning 0))
+	   (progn (forward-line 1) (org-babel-result-end))))))))
 
 (defun org-babel-result-end ()
   "Return the point at the end of the current set of results."
